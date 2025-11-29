@@ -8,12 +8,35 @@ from PIL import Image, ImageDraw
 import streamlit as st
 
 
+MARGIN_OFFSET = 0.1
+MIN_FOCUS_GAP = 0.05
+
+
 @dataclass
 class MiniatureSettings:
-    line1_height: float = 0.25
-    margin1_height: float = 0.35
-    margin2_height: float = 0.65
-    line2_height: float = 0.75
+    line1_height: float = 0.35
+    margin1_height: float = 0.25
+    margin2_height: float = 0.75
+    line2_height: float = 0.65
+
+
+def build_settings(top_orange: float, bottom_orange: float, offset: float = MARGIN_OFFSET) -> MiniatureSettings:
+    """Ensure orange lines define the focus band and yellow lines become fixed margins."""
+    top_orange = np.clip(top_orange, 0.0, 1.0)
+    bottom_orange = np.clip(bottom_orange, 0.0, 1.0)
+    if bottom_orange < top_orange:
+        top_orange, bottom_orange = bottom_orange, top_orange
+    if bottom_orange - top_orange < MIN_FOCUS_GAP:
+        bottom_orange = min(1.0, top_orange + MIN_FOCUS_GAP)
+
+    top_yellow = max(0.0, top_orange - offset)
+    bottom_yellow = min(1.0, bottom_orange + offset)
+    return MiniatureSettings(
+        line1_height=top_orange,
+        margin1_height=top_yellow,
+        margin2_height=bottom_yellow,
+        line2_height=bottom_orange,
+    )
 
 
 def kernel_size_from_blur_level(level: int) -> int:
@@ -45,10 +68,10 @@ def render_image(
     blur_level1: int,
     blur_level2: int,
     blur_shape: str = "box",
-    line1_height: float = 0.25,
-    line2_height: float = 0.75,
-    margin_1_height: float = 0.35,
-    margin_2_height: float = 0.65,
+    line1_height: float = 0.35,
+    line2_height: float = 0.65,
+    margin_1_height: float = 0.25,
+    margin_2_height: float = 0.75,
 ) -> np.ndarray:
     """Apply miniature blur to specified horizontal bands."""
     height = image.shape[0]
@@ -80,72 +103,47 @@ def render_image(
 
 
 def draw_guides(image: Image.Image, settings: MiniatureSettings) -> Image.Image:
-    """Overlay dashed horizontal guide lines that mark miniature bands."""
+    """Overlay horizontal guide lines with solid white for outer and dashed white for inner."""
     draw = ImageDraw.Draw(image)
     width, height = image.size
-    guides = [
-        (settings.line1_height, (255, 153, 0), 12),
-        (settings.line2_height, (255, 153, 0), 12),
-        (settings.margin1_height, (255, 222, 89), 8),
-        (settings.margin2_height, (255, 222, 89), 8),
-    ]
 
-    dash = 16
-    gap = 10
-    for relative_height, color, thickness in guides:
+    def _draw_line(relative_height: float, dashed: bool, thickness: int) -> None:
         y = int(relative_height * height)
-        x = 0
-        while x < width:
-            draw.line([(x, y), (min(x + dash, width), y)], fill=color, width=thickness)
-            x += dash + gap
+        if dashed:
+            dash = 18
+            gap = 12
+            x = 0
+            while x < width:
+                draw.line([(x, y), (min(x + dash, width), y)], fill=(255, 255, 255), width=thickness)
+                x += dash + gap
+        else:
+            draw.line([(0, y), (width, y)], fill=(255, 255, 255), width=thickness)
+
+    _draw_line(settings.margin1_height, dashed=True, thickness=1)
+    _draw_line(settings.line1_height, dashed=False, thickness=3)
+    _draw_line(settings.line2_height, dashed=False, thickness=3)
+    _draw_line(settings.margin2_height, dashed=True, thickness=1)
     return image
 
 
-def clamp_settings(settings: MiniatureSettings) -> MiniatureSettings:
-    """Ensure guide lines remain ordered."""
-    ordered = sorted(
-        [
-            ("line1_height", settings.line1_height),
-            ("margin1_height", settings.margin1_height),
-            ("margin2_height", settings.margin2_height),
-            ("line2_height", settings.line2_height),
-        ],
-        key=lambda item: item[1],
-    )
-    values = {name: value for name, value in ordered}
-    return MiniatureSettings(
-        line1_height=values["line1_height"],
-        margin1_height=values["margin1_height"],
-        margin2_height=values["margin2_height"],
-        line2_height=values["line2_height"],
-    )
-
-
-def sidebar_controls() -> Tuple[int, int, str, MiniatureSettings, bool]:
+def sidebar_controls() -> Tuple[int, int, str, MiniatureSettings]:
     st.sidebar.header("Miniature controls")
-    blur1 = st.sidebar.slider("Orange region blur", min_value=0, max_value=80, value=40, step=1)
-    blur2 = st.sidebar.slider("Yellow region blur", min_value=0, max_value=80, value=25, step=1)
+    blur1 = st.sidebar.slider("Outer blur", min_value=0, max_value=80, value=40, step=1)
+    blur2 = st.sidebar.slider("Inner blur", min_value=0, max_value=80, value=25, step=1)
     blur_shape = st.sidebar.selectbox("Blur shape", ["box", "gaussian", "circular"], index=2)
 
-    st.sidebar.subheader("Guide positions")
-    line1 = st.sidebar.slider("Top orange line (%)", min_value=5, max_value=45, value=25, step=1) / 100
-    margin1 = st.sidebar.slider("Top yellow line (%)", min_value=15, max_value=55, value=35, step=1) / 100
-    margin2 = st.sidebar.slider("Bottom yellow line (%)", min_value=45, max_value=85, value=65, step=1) / 100
-    line2 = st.sidebar.slider("Bottom orange line (%)", min_value=55, max_value=95, value=75, step=1) / 100
-
-    show_guides = st.sidebar.checkbox("Show guide overlay", value=True)
-    settings = clamp_settings(
-        MiniatureSettings(
-            line1_height=line1, margin1_height=margin1, margin2_height=margin2, line2_height=line2
-        )
+    st.sidebar.subheader("Guide positions (%)")
+    outer_top, outer_bottom = st.sidebar.slider(
+        "Focus band", min_value=5, max_value=95, value=(35, 65), step=1
     )
-    return blur1, blur2, blur_shape, settings, show_guides
+    settings = build_settings(outer_top / 100.0, outer_bottom / 100.0)
+    return blur1, blur2, blur_shape, settings
 
 
 def main() -> None:
     st.set_page_config(page_title="Miniature Effect Tool", layout="wide")
     st.title("Miniature Effect Playground")
-    st.caption("Upload an image and experiment with DxO-like miniature blur bands.")
+    st.caption("Upload an image and adjust the guides directly on a single preview.")
 
     uploaded_image = st.file_uploader("Upload an image", type=["png", "jpg", "jpeg"])
     if uploaded_image is None:
@@ -155,21 +153,18 @@ def main() -> None:
     pil_image = Image.open(uploaded_image).convert("RGB")
     base_array = np.array(pil_image)
 
-    blur1, blur2, blur_shape, settings, show_guides = sidebar_controls()
+    blur1, blur2, blur_shape, settings = sidebar_controls()
 
     if "processed_image" not in st.session_state:
         st.session_state["processed_image"] = base_array
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Preview")
-        preview_image = pil_image.copy()
-        if show_guides:
-            preview_image = draw_guides(preview_image, settings)
-        st.image(preview_image, use_column_width=True)
+    effect_enabled = st.toggle("Miniature effect", value=True)
+    show_guides = False
+    if effect_enabled:
+        show_guides = st.checkbox("Display guides", value=True)
 
-    with col2:
-        st.subheader("Result")
+    if effect_enabled:
+        st.subheader("Preview" if show_guides else "Preview (guides hidden)")
         if st.button("Save changes"):
             processed = render_image(
                 base_array,
@@ -183,7 +178,13 @@ def main() -> None:
             )
             st.session_state["processed_image"] = processed
 
-        st.image(st.session_state["processed_image"], use_column_width=True)
+        preview_image = Image.fromarray(st.session_state["processed_image"]).copy()
+        if show_guides:
+            preview_image = draw_guides(preview_image, settings)
+        st.image(preview_image, use_column_width=True)
+    else:
+        st.subheader("Original image")
+        st.image(pil_image, use_column_width=True)
 
     st.download_button(
         label="Download processed image",

@@ -16,4 +16,4 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Upload an image, tune the blur for the orange outer bands and yellow inner bands, choose the blur shape, then click **Save changes** to apply the updated kernel configuration. Use the download button to export the processed image.
+Upload an image, tune the blur for the outer (orange) and margin (yellow) regions, and position the orange guides (the yellow margins follow automatically). Toggle the miniature effect on to reveal the single preview, use the **Display guides** checkbox to show or hide the white overlays, click **Save changes** to re-render, or toggle the effect off anytime to view the original image. Use the download button to export the processed image.
